@@ -5,23 +5,38 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, { 
+    cors: { origin: "*" } 
+});
 
-app.use(express.static('public'));
+// ЧИТАЕТ ФАЙЛЫ ИЗ КОРНЯ (твоя структура!)
+app.use(express.static(__dirname));
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 const gameState = { players: {} };
 
 io.on('connection', (socket) => {
-    console.log(`Player ${socket.id} connected`);
+    console.log(`Игрок ${socket.id} подключился`);
     
-    socket.on('join', (playerData) => {
-        gameState.players[socket.id] = { id: socket.id, ...playerData };
+    socket.on('join', (data) => {
+        gameState.players[socket.id] = { 
+            id: socket.id, 
+            x: 100, y: 100, 
+            score: 0, 
+            dir: 'down',
+            ...data 
+        };
         io.emit('playersUpdate', Object.values(gameState.players));
     });
     
     socket.on('move', (data) => {
         if (gameState.players[socket.id]) {
-            gameState.players[socket.id] = { ...gameState.players[socket.id], ...data };
+            gameState.players[socket.id] = { 
+                ...gameState.players[socket.id], 
+                ...data 
+            };
             socket.broadcast.emit('playerMoved', gameState.players[socket.id]);
         }
     });
@@ -36,6 +51,7 @@ io.on('connection', (socket) => {
     });
 });
 
-server.listen(process.env.PORT || 3000, () => {
-    console.log('Tongan Beach MP server running!');
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Tongan Beach MP на порту ${PORT}`);
 });
