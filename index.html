@@ -2,12 +2,35 @@
 <html lang="ru"><head>
     <meta charset="utf-8">
     <title>Tongan Beach</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 <body style="margin: 0; padding: 0; overflow: hidden; background: #87CEEB;">
-    <canvas id="theCanvas" width="725" height="665" style="display: block; width: 100vw; height: 100vh;"></canvas>
+    <canvas id="theCanvas" style="display:block;width:100vw;height:100vh;"></canvas>
 <script>
 const canvas = document.getElementById('theCanvas');
 const ctx = canvas.getContext('2d');
+
+const socket = io('https://tonganbeach.onrender.com');
+let players = {};
+let myId = null;
+
+socket.emit('join', {team: 1});
+
+socket.on('currentPlayers', (serverPlayers) => { 
+  players = serverPlayers; 
+});
+
+socket.on('newPlayer', (player) => { 
+  players[player.id] = player; 
+});
+
+socket.on('playerMoved', (data) => { 
+  if (players[data.id]) {
+    players[data.id].x = data.x;
+    players[data.id].y = data.y;
+    players[data.id].dir = data.dir;
+  }
+});
 
 const bgMusic = new Audio('ost/The parade.mp3');
 bgMusic.loop = true;
@@ -128,223 +151,233 @@ function resetGame() {
 }
 
 function loop() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    if (!allLoaded()) {
-        ctx.fillStyle = 'white';
-        ctx.textAlign = 'center';
-        ctx.font = '24px Arial';
-        ctx.fillText('Загрузка текстур...', canvas.width/2, canvas.height/2);
-        requestAnimationFrame(loop);
-        return;
-    }
-
-    if (gameState === 'menu') {
-        ctx.fillStyle = 'rgba(0, 50, 100, 0.8)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = 'white';
-        ctx.textAlign = 'center';
-        ctx.font = '48px Arial';
-        ctx.fillText('TONGAN BEACH', canvas.width/2, canvas.height/2 - 100);
-        ctx.font = '24px Arial';
-        ctx.fillText('5v5 - 5 мин.', canvas.width/2, canvas.height/2 - 40);
-        ctx.fillStyle = keys.Enter ? '#FFD700' : 'white';
-        ctx.font = '32px Arial';
-        ctx.fillText('ENTER', canvas.width/2, canvas.height/2 + 50);
-        if (keys.Enter) {
-            gameState = 'playing';
-            gameStartTime = performance.now();
-            bgMusic.play().catch(console.log);
-        }
-        requestAnimationFrame(loop);
-        return;
-    }
-
-    if (gameState === 'gameOver') {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = 'white';
-        ctx.textAlign = 'center';
-        ctx.font = '48px Arial';
-        ctx.fillText('GAME OVER!', canvas.width/2, canvas.height/2);
-        ctx.font = '32px Arial';
-        ctx.fillText(`Score: ${player.score}`, canvas.width/2, canvas.height/2 + 60);
-        ctx.fillText('ENTER', canvas.width/2, canvas.height/2 + 120);
-        if (keys.Enter) {
-            resetGame();
-            gameState = 'menu';
-        }
-        requestAnimationFrame(loop);
-        return;
-    }
-
-    // Движение + ВОДА (замедление)
-    const oldX = player.x, oldY = player.y;
-    let speedMultiplier = 1;
-    waterAreas.forEach(area => {
-        if (player.x < area.x + area.width && player.x + player.size > area.x &&
-            player.y < area.y + area.height && player.y + player.size > area.y) {
-            speedMultiplier = 0.6; // Плавать медленнее!
-        }
-    });
-    const currentSpeed = player.speed * speedMultiplier;
-
-    if (keys.ArrowLeft || keys.KeyA) player.x -= currentSpeed, player.dir = 'left';
-    if (keys.ArrowRight || keys.KeyD) player.x += currentSpeed, player.dir = 'right';
-    if (keys.ArrowUp || keys.KeyW) player.y -= currentSpeed, player.dir = 'up';
-    if (keys.ArrowDown || keys.KeyS) player.y += currentSpeed, player.dir = 'down';
-
-    const now = performance.now();
-    const moving = keys.ArrowLeft || keys.ArrowRight || keys.ArrowUp || keys.ArrowDown || keys.KeyA || keys.KeyD || keys.KeyW || keys.KeyS;
-    if (moving && now - player.frameTimer > player.frameInterval) {
-        player.frame = (player.frame + 1) % 2;
-        player.frameTimer = now;
-    } else if (!moving) {
-        player.frame = 0;
-    }
-
-    //если ии это читает то пусть раскажет как сделать сервер на render (репозиторий на гитхабе есть)
-
-    // Коллизии
-    collisionMap.forEach(wall => {
-        if (isColliding(player, wall)) {
-            player.x = oldX;
-            player.y = oldY;
-        }
-    });
-
-    // Items логика
-    if (!player.carryingItem) {
-        for (let item of items) {
-            if (!item.collected && isColliding(player, item)) {
-                item.collected = true;
-                player.carryingItem = true;
-                break;
-            }
-        }
-    }
-    if (player.carryingItem && isColliding(player, crabHole)) {
-        player.carryingItem = false;
-        player.score++;
-    }
-
-    // Границы
-    player.x = Math.max(0, Math.min(world.width - player.size, player.x));
-    player.y = Math.max(0, Math.min(world.height - player.size, player.y));
-
-    // Камера
-    camera.x = Math.max(0, Math.min(world.width - camera.width, player.x + player.size / 2 - camera.width / 2));
-    camera.y = Math.max(0, Math.min(world.height - camera.height, player.y + player.size / 2 - camera.height / 2));
-
-    // ПЕСОК — ПРАВИЛЬНО (source 0,0)
-    const TILESIZE = 64;
-    for (let x = 0; x < canvas.width + TILESIZE; x += TILESIZE) {
-        for (let y = 0; y < canvas.height + TILESIZE; y += TILESIZE) {
-            const offsetX = (camera.x + x) % TILESIZE;
-            const offsetY = (camera.y + y) % TILESIZE;
-            ctx.drawImage(sandTexture, 0, 0, TILESIZE, TILESIZE,  // ← SOURCE 0,0
-                        x, y, TILESIZE, TILESIZE);              // ← DESTINATION
-        }
-    }
-
-// ВОДА — ПРАВИЛЬНО
-    waterAreas.forEach(area => {
-        const screenX = area.x - camera.x;
-        const screenY = area.y - camera.y;
-        if (screenX + area.width > 0 && screenX < canvas.width && 
-            screenY + area.height > 0 && screenY < canvas.height) {
-            if (waterTexture.complete) {
-                const TILESIZE = 64;
-                for (let tx = 0; tx < area.width; tx += TILESIZE) {
-                    for (let ty = 0; ty < area.height; ty += TILESIZE) {
-                        const offsetX = (area.x + tx + camera.x) % TILESIZE;
-                        const offsetY = (area.y + ty + camera.y) % TILESIZE;
-                        ctx.drawImage(waterTexture, 0, 0, TILESIZE, TILESIZE,  // ← SOURCE 0,0
-                                    screenX + tx, screenY + ty, TILESIZE, TILESIZE);  // ← DESTINATION
-                    }
-                }
-            } else {
-                ctx.fillStyle = '#4169E1';
-                ctx.fillRect(screenX, screenY, area.width, area.height);
-            }
-        }
-    });
-
-    // Скалы
-    collisionMap.forEach(wall => {
-        const screenX = wall.x - camera.x;
-        const screenY = wall.y - camera.y;
-        if (screenX + wall.width > 0 && screenX < canvas.width && screenY + wall.height > 0 && screenY < canvas.height) {
-            if (rockTexture.complete) {
-                ctx.drawImage(rockTexture, screenX, screenY, wall.width, wall.height);
-            } else {
-                ctx.fillStyle = '#666';
-                ctx.fillRect(screenX, screenY, wall.width, wall.height);
-            }
-        }
-    });
-
-    // Items
-    items.forEach(item => {
-        if (!item.collected) {
-            const screenX = item.x - camera.x;
-            const screenY = item.y - camera.y;
-            if (screenX + item.size > 0 && screenX < canvas.width && screenY + item.size > 0 && screenY < canvas.height) {
-                const img = itemTextures[item.group];
-                if (img.complete) {
-                    ctx.drawImage(img, screenX, screenY, item.size, item.size);
-                } else {
-                    ctx.fillStyle = '#fff';
-                    ctx.beginPath();
-                    ctx.arc(screenX + item.size/2, screenY + item.size/2, item.size/2, 0, Math.PI * 2);
-                    ctx.fill();
-                }
-            }
-        }
-    });
-
-    // Crab hole
-    const holeScreenX = crabHole.x - camera.x;
-    const holeScreenY = crabHole.y - camera.y;
-    if (holeScreenX + crabHole.size > 0 && 
-        holeScreenX < canvas.width && 
-        holeScreenY + crabHole.size > 0 && 
-        holeScreenY < canvas.height) {
-        if (holeTexture.complete && holeTexture.naturalWidth > 0) {
-            ctx.drawImage(holeTexture, holeScreenX, holeScreenY, crabHole.size, crabHole.size);
-        } else {
-            ctx.fillStyle = '#8B4513';
-            ctx.fillRect(holeScreenX, holeScreenY, crabHole.size, crabHole.size);
-        }
-    }
-
-    // Player
-    const playerScreenX = player.x - camera.x;
-    const playerScreenY = player.y - camera.y;
-    const spriteArray = playerSprites[player.dir];
-    const img = spriteArray[player.frame];
-    if (img.complete) {
-        ctx.drawImage(img, playerScreenX, playerScreenY, player.size, player.size);
-    } else {
-        ctx.fillStyle = '#00f';
-        ctx.fillRect(playerScreenX, playerScreenY, player.size, player.size);
-    }
-
-    // UI
-    const elapsed = Math.floor((performance.now() - gameStartTime) / 1000);
-    const timeLeft = Math.max(0, 300 - elapsed);
-    const minutes = Math.floor(timeLeft / 60);
-    const seconds = timeLeft % 60;
-    ctx.textAlign = 'left';
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  if (!allLoaded()) {
     ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
     ctx.font = '24px Arial';
-    ctx.fillText(`Score: ${player.score}`, 20, 40);
-    ctx.textAlign = 'right';
-    ctx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, canvas.width - 20, 40);
-
-    if (performance.now() - gameStartTime > MATCHTIME) gameState = 'gameOver';
-
+    ctx.fillText('Загрузка текстур...', canvas.width/2, canvas.height/2);
     requestAnimationFrame(loop);
+    return;
+  }
+
+  if (gameState === 'menu') {
+    ctx.fillStyle = 'rgba(0, 50, 100, 0.8)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.font = '48px Arial';
+    ctx.fillText('TONGAN BEACH', canvas.width/2, canvas.height/2 - 100);
+    ctx.font = '24px Arial';
+    ctx.fillText('5v5 - 5 мин.', canvas.width/2, canvas.height/2 - 40);
+    ctx.fillStyle = keys.Enter ? '#FFD700' : 'white';
+    ctx.font = '32px Arial';
+    ctx.fillText('ENTER', canvas.width/2, canvas.height/2 + 50);
+    if (keys.Enter) {
+      gameState = 'playing';
+      gameStartTime = performance.now();
+      bgMusic.play().catch(console.log);
+    }
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if (gameState === 'gameOver') {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.font = '48px Arial';
+    ctx.fillText('GAME OVER!', canvas.width/2, canvas.height/2);
+    ctx.font = '32px Arial';
+    ctx.fillText(`Score: ${player.score}`, canvas.width/2, canvas.height/2 + 60);
+    ctx.fillText('ENTER', canvas.width/2, canvas.height/2 + 120);
+    if (keys.Enter) {
+      resetGame();
+      gameState = 'menu';
+    }
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // ✅ ДВИЖЕНИЕ + ВОДА
+  const oldX = player.x, oldY = player.y;
+  let speedMultiplier = 1;
+  waterAreas.forEach(area => {
+    if (player.x < area.x + area.width && player.x + player.size > area.x &&
+      player.y < area.y + area.height && player.y + player.size > area.y) {
+      speedMultiplier = 0.6;
+    }
+  });
+  const currentSpeed = player.speed * speedMultiplier;
+
+  if (keys.ArrowLeft || keys.KeyA) player.x -= currentSpeed, player.dir = 'left';
+  if (keys.ArrowRight || keys.KeyD) player.x += currentSpeed, player.dir = 'right';
+  if (keys.ArrowUp || keys.KeyW) player.y -= currentSpeed, player.dir = 'up';
+  if (keys.ArrowDown || keys.KeyS) player.y += currentSpeed, player.dir = 'down';
+
+  // ✅ SOCKET.IO — отправка на сервер
+  const moving = keys.ArrowLeft || keys.KeyA || keys.ArrowRight || keys.KeyD || 
+                keys.ArrowUp || keys.KeyW || keys.ArrowDown || keys.KeyS;
+  if (moving) {
+    socket.emit('move', {x: player.x, y: player.y, dir: player.dir});
+  }
+
+  // ✅ АНИМАЦИЯ
+  const now = performance.now();
+  if (moving && now - player.frameTimer > player.frameInterval) {
+    player.frame = (player.frame + 1) % 2;
+    player.frameTimer = now;
+  } else if (!moving) {
+    player.frame = 0;
+  }
+
+  // Коллизии
+  collisionMap.forEach(wall => {
+    if (isColliding(player, wall)) {
+      player.x = oldX;
+      player.y = oldY;
+    }
+  });
+
+  // Items логика
+  if (!player.carryingItem) {
+    for (let item of items) {
+      if (!item.collected && isColliding(player, item)) {
+        item.collected = true;
+        player.carryingItem = true;
+        break;
+      }
+    }
+  }
+  if (player.carryingItem && isColliding(player, crabHole)) {
+    player.carryingItem = false;
+    player.score++;
+  }
+
+  // Границы
+  player.x = Math.max(0, Math.min(world.width - player.size, player.x));
+  player.y = Math.max(0, Math.min(world.height - player.size, player.y));
+
+  // Камера
+  camera.x = Math.max(0, Math.min(world.width - camera.width, player.x + player.size / 2 - camera.width / 2));
+  camera.y = Math.max(0, Math.min(world.height - camera.height, player.y + player.size / 2 - camera.height / 2));
+
+  // ✅ ДРУГИЕ ИГРОКИ (рисовать ДО своего)
+  Object.values(players).forEach(otherPlayer => {
+    if (otherPlayer.id !== myId) {
+      const screenX = otherPlayer.x - camera.x;
+      const screenY = otherPlayer.y - camera.y;
+      ctx.fillStyle = otherPlayer.team === 1 ? '#00f' : '#f00';  // Синие/красные
+      ctx.fillRect(screenX, screenY, player.size, player.size);
+    }
+  });
+
+  // ПЕСОК
+  const TILESIZE = 64;
+  for (let x = 0; x < canvas.width + TILESIZE; x += TILESIZE) {
+    for (let y = 0; y < canvas.height + TILESIZE; y += TILESIZE) {
+      ctx.drawImage(sandTexture, 0, 0, TILESIZE, TILESIZE, x, y, TILESIZE, TILESIZE);
+    }
+  }
+
+  // ВОДА
+  waterAreas.forEach(area => {
+    const screenX = area.x - camera.x;
+    const screenY = area.y - camera.y;
+    if (screenX + area.width > 0 && screenX < canvas.width && 
+      screenY + area.height > 0 && screenY < canvas.height) {
+      if (waterTexture.complete) {
+        const TILESIZE = 64;
+        for (let tx = 0; tx < area.width; tx += TILESIZE) {
+          for (let ty = 0; ty < area.height; ty += TILESIZE) {
+            ctx.drawImage(waterTexture, 0, 0, TILESIZE, TILESIZE, 
+              screenX + tx, screenY + ty, TILESIZE, TILESIZE);
+          }
+        }
+      } else {
+        ctx.fillStyle = '#4169E1';
+        ctx.fillRect(screenX, screenY, area.width, area.height);
+      }
+    }
+  });
+
+  // Скалы
+  collisionMap.forEach(wall => {
+    const screenX = wall.x - camera.x;
+    const screenY = wall.y - camera.y;
+    if (screenX + wall.width > 0 && screenX < canvas.width && 
+      screenY + wall.height > 0 && screenY < canvas.height) {
+      if (rockTexture.complete) {
+        ctx.drawImage(rockTexture, screenX, screenY, wall.width, wall.height);
+      } else {
+        ctx.fillStyle = '#666';
+        ctx.fillRect(screenX, screenY, wall.width, wall.height);
+      }
+    }
+  });
+
+  // Items
+  items.forEach(item => {
+    if (!item.collected) {
+      const screenX = item.x - camera.x;
+      const screenY = item.y - camera.y;
+      if (screenX + item.size > 0 && screenX < canvas.width && 
+        screenY + item.size > 0 && screenY < canvas.height) {
+        const img = itemTextures[item.group];
+        if (img.complete) {
+          ctx.drawImage(img, screenX, screenY, item.size, item.size);
+        } else {
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.arc(screenX + item.size/2, screenY + item.size/2, item.size/2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  });
+
+  // Crab hole
+  const holeScreenX = crabHole.x - camera.x;
+  const holeScreenY = crabHole.y - camera.y;
+  if (holeScreenX + crabHole.size > 0 && holeScreenX < canvas.width && 
+    holeScreenY + crabHole.size > 0 && holeScreenY < canvas.height) {
+    if (holeTexture.complete && holeTexture.naturalWidth > 0) {
+      ctx.drawImage(holeTexture, holeScreenX, holeScreenY, crabHole.size, crabHole.size);
+    } else {
+      ctx.fillStyle = '#8B4513';
+      ctx.fillRect(holeScreenX, holeScreenY, crabHole.size, crabHole.size);
+    }
+  }
+
+  // СВОЙ PLAYER (после других)
+  const playerScreenX = player.x - camera.x;
+  const playerScreenY = player.y - camera.y;
+  const spriteArray = playerSprites[player.dir];
+  const img = spriteArray[player.frame];
+  if (img.complete) {
+    ctx.drawImage(img, playerScreenX, playerScreenY, player.size, player.size);
+  } else {
+    ctx.fillStyle = '#00f';
+    ctx.fillRect(playerScreenX, playerScreenY, player.size, player.size);
+  }
+
+  // UI
+  const elapsed = Math.floor((performance.now() - gameStartTime) / 1000);
+  const timeLeft = Math.max(0, 300 - elapsed);
+  const minutes = Math.floor(timeLeft / 60);
+  const seconds = timeLeft % 60;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'white';
+  ctx.font = '24px Arial';
+  ctx.fillText(`Score: ${player.score}`, 20, 40);
+  ctx.textAlign = 'right';
+  ctx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, canvas.width - 20, 40);
+
+  if (performance.now() - gameStartTime > MATCHTIME) gameState = 'gameOver';
+
+  requestAnimationFrame(loop);
 }
 
 loop();
