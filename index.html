@@ -1,5 +1,8 @@
 <!--decipher the Caesar cipher shift 1 "J'n ujsfe pg nbljoh b tfswfs"-->
+
 <!--"rdbqds bncd : 31337"-->
+
+
 
 <!DOCTYPE html>
 <html lang="ru"><head>
@@ -61,6 +64,18 @@ function uiUpdateLobby() {
   ctx.fillStyle = 'white';
   ctx.textAlign = 'center';
   ctx.font = '24px Arial';
+
+  // В uiUpdateLobby, в конце
+  if (lobbyPlayers.length >= 2) {
+    ctx.fillStyle = keys.Enter ? '#FFD700' : 'white';
+    ctx.font = '32px Arial';
+    ctx.fillText('Enter — старт', canvas.width / 2, y + 30);
+
+    if (keys.Enter) {
+      socket.emit('startGame', myRoomId);
+      delete keys.Enter;
+    }
+  }
 
   let y = 100;
   ctx.fillText('ЛОББИ', canvas.width / 2, y);
