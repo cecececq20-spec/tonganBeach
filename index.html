@@ -271,7 +271,6 @@ function resetGame() {
   items.forEach(item => item.collected = false);
 }
 
-// ОСНОВНОЙ ЦИКЛ
 function loop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -284,7 +283,7 @@ function loop() {
     return;
   }
 
-  // ЗАПУСК ИГРЫ (играть только когда gameState === 'playing' или 'gameOver')
+  // ИГРА + GAMEOVER (карта, другие игроки, таймер и т.д.)
   if (gameState === 'playing' || gameState === 'gameOver') {
     // ДВИЖЕНИЕ + ВОДА
     const oldX = player.x;
@@ -475,15 +474,6 @@ function loop() {
     if (performance.now() - gameStartTime > MATCHTIME) {
       gameState = 'gameOver';
     }
-  } else if (gameState === 'menu') {
-    // Это уже не используется, т.к. nav меню в HTML
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.fillStyle = 'white';
-    ctx.textAlign = 'center';
-    ctx.font = '24px Arial';
-    ctx.fillText('Открой меню выбора комнат', canvas.width / 2, canvas.height / 2);
   }
 
   // GAME OVER
