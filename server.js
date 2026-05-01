@@ -10,7 +10,7 @@ const io = new Server(server, {
   path: '/socket.io/'
 });
 
-// ✅ СТАТИКА ИЗ КОРНЯ (index.html, текстуры, аудио и т.д.)
+// ✅ СТАТИКА ИЗ КОРНЯ (index.html, textures, items, ost и т.д.)
 app.use(express.static(__dirname));
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
@@ -20,16 +20,26 @@ app.get('/', (req, res) => {
 const rooms = {};  // {roomId: {players: {}, started: false}}
 
 io.on('connection', (socket) => {
-  console.log(`Игрок подключился: ${socket.id}`);
+  console.log(`⚽ Игрок подключился: ${socket.id}`);
 
-  // Вход в лобби
+  // 1) отправляем клиенту доступные комнаты
+  socket.emit('availableRooms',
+    Object.keys(rooms).filter(id => !rooms[id].started)
+  );
+
+  // 2) вход в лобби (комнату)
   socket.on('lobbyJoin', (data) => {
     const { roomId, playerName } = data;
+
     if (!rooms[roomId]) {
       rooms[roomId] = { players: {}, started: false };
     }
 
     socket.join(roomId);
+
+    // определяем команду: 1 или 2
+    const teams = Object.values(rooms[roomId].players).map(p => p.team);
+    const nextTeam = teams.length > 0 && teams.every(t => t === 1) ? 2 : 1;
 
     rooms[roomId].players[socket.id] = {
       id: socket.id,
@@ -40,34 +50,23 @@ io.on('connection', (socket) => {
       size: 40,
       score: 0,
       ready: false,
-      team: Object.keys(rooms[roomId].players).length % 2 + 1
+      team: nextTeam
     };
 
-    // Отправить клиенту:
-    socket.emit('id', socket.id);                          // myId
-    socket.emit('currentPlayers', Object.values(rooms[roomId].players)); // игроки
+    // 1) самому игроку
+    socket.emit('id', socket.id);
+    socket.emit('currentPlayers', Object.values(rooms[roomId].players));
 
-    // Отправить всем в комнате:
-    io.to(roomId).emit('lobbyUpdate', {
+    // 2) всем в комнате — обновить список игроков и счётчик
+    io.to(roomId).emit('playerCount', {
       roomId,
-      players: Object.values(rooms[roomId].players),
-      started: rooms[roomId].started
+      count: Object.keys(rooms[roomId].players).length
     });
+
+    io.to(roomId).emit('newPlayer', rooms[roomId].players[socket.id]);
   });
 
-  // Готовность (можно не использовать, если не нужна кнопка готов)
-  socket.on('toggleReady', (roomId) => {
-    if (rooms[roomId]?.players[socket.id]) {
-      rooms[roomId].players[socket.id].ready = !rooms[roomId].players[socket.id].ready;
-      io.to(roomId).emit('lobbyUpdate', {
-        roomId,
-        players: Object.values(rooms[roomId].players),
-        started: rooms[roomId].started
-      });
-    }
-  });
-
-  // Старт матча
+  // 3) старт матча
   socket.on('startGame', (roomId) => {
     if (rooms[roomId] && Object.keys(rooms[roomId].players).length >= 2) {
       rooms[roomId].started = true;
@@ -75,9 +74,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Движение игрока
+  // 4) движение игрока
   socket.on('move', (data) => {
-    const roomId = Array.from(socket.rooms)[1];
+    const roomId = Array.from(socket.rooms)[1]; // первое — common, второе — roomId
     if (rooms[roomId]?.players[socket.id]) {
       rooms[roomId].players[socket.id] = {
         ...rooms[roomId].players[socket.id],
@@ -85,7 +84,6 @@ io.on('connection', (socket) => {
         y: data.y,
         dir: data.dir
       };
-      // всем, кроме себя
       socket.to(roomId).emit('playerMoved', {
         id: socket.id,
         x: data.x,
@@ -95,16 +93,15 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Отключение игрока
+  // 5) отключение игрока
   socket.on('disconnect', () => {
-    console.log(`Игрок отключился: ${socket.id}`);
+    console.log(`🔴 Игрок отключился: ${socket.id}`);
     for (let roomId in rooms) {
       if (rooms[roomId].players[socket.id]) {
         delete rooms[roomId].players[socket.id];
-        io.to(roomId).emit('lobbyUpdate', {
+        io.to(roomId).emit('playerCount', {
           roomId,
-          players: Object.values(rooms[roomId].players),
-          started: rooms[roomId].started
+          count: Object.keys(rooms[roomId].players).length
         });
         break;
       }
@@ -115,6 +112,6 @@ io.on('connection', (socket) => {
 // RENDER PORT
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
-  console.log(`🌴 Tongan Beach на порту ${port}`);
-  console.log(`📱 https://tonganbeach.onrender.com`);
+  console.log(`🌴 Tongan Beach работает на порту ${port}`);
+  console.log(`🌐 https://tonganbeach.onrender.com`);
 });
