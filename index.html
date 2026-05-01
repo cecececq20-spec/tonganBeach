@@ -6,32 +6,153 @@
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 <body style="margin: 0; padding: 0; overflow: hidden; background: #87CEEB;">
+
+  <!-- 1) Ввод ника -->
+  <div id="menuScreen" style="position:absolute;top:0;left:0;width:100vw;height:100vh;z-index:3;display:flex;align-items:center;justify-content:center;background:rgba(0,50,100,0.95);">
+    <div style="color:white;text-align:center;width:400px;">
+      <h2>Введите ваш ник</h2>
+      <input id="playerNameInput" type="text" maxlength="20" placeholder="Ник..." style="padding:8px;margin-bottom:10px;width:100%;">
+      <button id="nameConfirmBtn" style="padding:10px;background:#00f;color:white;width:100%;">Продолжить</button>
+    </div>
+  </div>
+
+  <!-- 2) Список комнат / создать -->
+  <div id="roomsScreen" style="display:none;position:absolute;top:0;left:0;width:100vw;height:100vh;z-index:3;background:rgba(0,50,100,0.95);color:white;text-align:center;padding-top:100px;">
+    <h2>Выберите комнату</h2>
+    <button id="createRoomBtn" style="padding:15px;background:#00f;color:white;margin-top:10px;">Создать комнату</button>
+    <p>Или выберите номер комнаты:</p>
+    <div id="roomsList" style="max-width:400px;margin:auto;"></div>
+  </div>
+
+  <!-- 3) Ожидание игроков -->
+  <div id="waitingScreen" style="display:none;position:absolute;top:0;left:0;width:100vw;height:100vh;z-index:3;background:rgba(0,50,100,0.95);color:white;text-align:center;padding-top:100px;">
+    <h2>Ожидание игроков...</h2>
+    <p id="waitInfo">Соединение...</p>
+  </div>
+
+  <!-- 4) Игровое поле -->
   <canvas id="theCanvas" style="display:block;width:100vw;height:100vh;"></canvas>
+
 <script>
 const canvas = document.getElementById('theCanvas');
 const ctx = canvas.getContext('2d');
 
+// Меню‑элементы
+const menuScreen = document.getElementById('menuScreen');
+const roomsScreen = document.getElementById('roomsScreen');
+const waitingScreen = document.getElementById('waitingScreen');
+const playerNameInput = document.getElementById('playerNameInput');
+const nameConfirmBtn = document.getElementById('nameConfirmBtn');
+const createRoomBtn = document.getElementById('createRoomBtn');
+const roomsList = document.getElementById('roomsList');
+const waitInfo = document.getElementById('waitInfo');
+
+// Соединение
 const socket = io('https://tonganbeach.onrender.com');
 
-let players = {};          // {id: {x, y, team, ...}}
-let myId = null;           // твой ид (из 'id' события)
-let myRoomId = null;       // roomId, где ты в лобби
-let lobbyPlayers = [];     // для лобби
-let gameState = 'menu';    // 'menu' / 'playing' / 'gameOver'
-let gameStartTime = 0;     // ms
+// Игрок и игра
+let playerName = 'Игрок';
+let myRoomId = null;
+let gameState = 'menu';        // menu / lobby / playing / gameOver
+let gameStartTime = 0;
+let players = {};
+let myId = null;
 let team1Score = 0;
 let team2Score = 0;
 
-const MATCHTIME = 300000;  // 5 минут
+const MATCHTIME = 300000;       // 5 минут
 
-const bgMusic = new Audio('ost/The parade.mp3');
-bgMusic.loop = true;
-bgMusic.volume = 0.3;
+// ================== СОБЫТИЯ СЕРВЕРА ==================
 
+socket.on('id', (id) => {
+  myId = id;
+});
+
+socket.on('availableRooms', (roomIds) => {
+  roomsList.innerHTML = '';
+  if (roomIds.length === 0) {
+    roomsList.innerHTML = '<p style="color:#888;">Нет доступных комнат</p>';
+  } else {
+    roomIds.forEach(roomId => {
+      const btn = document.createElement('button');
+      btn.textContent = `Комната: ${roomId}`;
+      btn.style.padding = '10px';
+      btn.style.margin = '5px';
+      btn.style.border = '1px solid #00f';
+      btn.style.borderRadius = '4px';
+      btn.style.cursor = 'pointer';
+      btn.onclick = () => joinRoom(roomId);
+      roomsList.appendChild(btn);
+    });
+  }
+});
+
+socket.on('playerCount', (data) => {
+  waitInfo.textContent = `Комната ${data.roomId} — игроки: ${data.count} / 2`;
+});
+
+socket.on('gameStart', (roomId) => {
+  gameState = 'playing';
+  gameStartTime = performance.now();
+  waitingScreen.style.display = 'none';
+  console.log('Игра стартовала, roomId:', roomId);
+});
+
+socket.on('gameOver', () => {
+  gameState = 'gameOver';
+});
+
+socket.on('currentPlayers', (serverPlayers) => {
+  players = serverPlayers;
+});
+
+socket.on('newPlayer', (newPlayer) => {
+  players[newPlayer.id] = newPlayer;
+});
+
+socket.on('playerMoved', (data) => {
+  if (players[data.id]) {
+    players[data.id].x = data.x;
+    players[data.id].y = data.y;
+    players[data.id].dir = data.dir;
+  }
+});
+
+// ================== ЛОГИКА МЕНЮ ==================
+
+function joinRoom(roomId) {
+  myRoomId = roomId;
+  socket.emit('lobbyJoin', {
+    roomId: myRoomId,
+    playerName: playerName
+  });
+  waitingScreen.style.display = 'block';
+  roomsScreen.style.display = 'none';
+}
+
+nameConfirmBtn.addEventListener('click', () => {
+  const v = playerNameInput.value.trim();
+  if (v) {
+    playerName = v;
+    menuScreen.style.display = 'none';
+    socket.emit('getAvailableRooms');
+    roomsScreen.style.display = 'block';
+  }
+});
+
+createRoomBtn.addEventListener('click', () => {
+  const roomId = 'room_' + Math.floor(Math.random() * 1000);
+  joinRoom(roomId);
+});
+
+// ============== ВСЁ ОСНОВНОЕ «ИГРОВОЕ» ==============
+
+// Ввод
 const keys = {};
 window.addEventListener('keydown', e => { keys[e.code] = true; });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
+// Камера и мир
 const world = { width: 2000, height: 2000 };
 const camera = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
 
@@ -44,6 +165,7 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
+// Загрузка текстур
 function loadImage(src) {
   const img = new Image();
   img.src = src;
@@ -57,9 +179,9 @@ const holeTexture = loadImage('textures/hole_texture.png');
 
 const playerSprites = {
   right: [loadImage('playerpozez/Pl_right1.png'), loadImage('playerpozez/Pl_right2.png')],
-  left: [loadImage('playerpozez/PL_left1.png'), loadImage('playerpozez/PL_left2.png')],
-  up: [loadImage('playerpozez/Pl_up1.png'), loadImage('playerpozez/Pl_up2.png')],
-  down: [loadImage('playerpozez/PL_down1.png'), loadImage('playerpozez/PL_down2.png')]
+  left:  [loadImage('playerpozez/PL_left1.png'),  loadImage('playerpozez/PL_left2.png')],
+  up:    [loadImage('playerpozez/Pl_up1.png'),    loadImage('playerpozez/Pl_up2.png')],
+  down:  [loadImage('playerpozez/PL_down1.png'),  loadImage('playerpozez/PL_down2.png')]
 };
 
 const itemTextures = {};
@@ -122,39 +244,9 @@ const items = [
 
 const crabHole = { x: 400, y: 400, size: 100 };
 
-// SOCKET ON (клиент)
-socket.on('id', (id) => {
-  myId = id;
-});
+// ============== ОСНОВНОЙ ЦИКЛ ==============
 
-socket.on('currentPlayers', (serverPlayers) => {
-  players = serverPlayers;
-});
-
-socket.on('newPlayer', (newPlayer) => {
-  players[newPlayer.id] = newPlayer;
-});
-
-socket.on('playerMoved', (data) => {
-  if (players[data.id]) {
-    players[data.id].x = data.x;
-    players[data.id].y = data.y;
-    players[data.id].dir = data.dir;
-  }
-});
-
-socket.on('gameStart', (roomId) => {
-  gameState = 'playing';
-  gameStartTime = performance.now();
-});
-
-socket.on('lobbyUpdate', (data) => {
-  myRoomId = data.roomId;
-  lobbyPlayers = data.players;
-  uiUpdateLobby();
-});
-
-// ВСПОМОГАТЕЛЬНЫЕ
+// Вспомогательные
 function isColliding(rect1, rect2) {
   const r2w = rect2.width || rect2.size;
   const r2h = rect2.height || rect2.size;
@@ -179,46 +271,6 @@ function resetGame() {
   items.forEach(item => item.collected = false);
 }
 
-// ЛОББИ‑МЕНЮ
-function uiUpdateLobby() {
-  if (gameState !== 'menu') return;
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = 'rgba(0, 50, 100, 0.8)';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = 'white';
-  ctx.textAlign = 'center';
-  ctx.font = '24px Arial';
-
-  let y = 100;
-  ctx.fillText('ЛОББИ', canvas.width / 2, y);
-  y += 40;
-
-  lobbyPlayers.forEach(p => {
-    const color = p.ready ? '#0f0' : '#888';
-    ctx.fillStyle = color;
-    ctx.fillText(
-      `${p.name} (${p.team === 1 ? 'Синие' : 'Красные'})${p.ready ? ' ✅' : ''}`,
-      canvas.width / 2,
-      y
-    );
-    y += 30;
-  });
-
-  if (lobbyPlayers.length >= 2) {
-    ctx.fillStyle = keys.Enter ? '#FFD700' : 'white';
-    ctx.font = '32px Arial';
-    ctx.fillText('Enter — старт', canvas.width / 2, y + 30);
-
-    if (keys.Enter) {
-      socket.emit('startGame', myRoomId);
-      delete keys.Enter;
-    }
-  }
-}
-
 // ОСНОВНОЙ ЦИКЛ
 function loop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -232,36 +284,206 @@ function loop() {
     return;
   }
 
-  // МЕНЮ / ЛОББИ
-  if (gameState === 'menu') {
-    ctx.fillStyle = 'rgba(0, 50, 100, 0.8)';
+  // ЗАПУСК ИГРЫ (играть только когда gameState === 'playing' или 'gameOver')
+  if (gameState === 'playing' || gameState === 'gameOver') {
+    // ДВИЖЕНИЕ + ВОДА
+    const oldX = player.x;
+    const oldY = player.y;
+    let speedMultiplier = 1;
+
+    waterAreas.forEach(area => {
+      if (player.x < area.x + area.width &&
+          player.x + player.size > area.x &&
+          player.y < area.y + area.height &&
+          player.y + player.size > area.y) {
+        speedMultiplier = 0.6;
+      }
+    });
+
+    const currentSpeed = player.speed * speedMultiplier;
+
+    if (keys.ArrowLeft  || keys.KeyA) player.x -= currentSpeed, player.dir = 'left';
+    if (keys.ArrowRight || keys.KeyD) player.x += currentSpeed, player.dir = 'right';
+    if (keys.ArrowUp    || keys.KeyW) player.y -= currentSpeed, player.dir = 'up';
+    if (keys.ArrowDown  || keys.KeyS) player.y += currentSpeed, player.dir = 'down';
+
+    const moving = keys.ArrowLeft || keys.KeyA || keys.ArrowRight || keys.KeyD ||
+                   keys.ArrowUp   || keys.KeyW || keys.ArrowDown  || keys.KeyS;
+
+    if (moving) {
+      socket.emit('move', { x: player.x, y: player.y, dir: player.dir });
+    }
+
+    const now = performance.now();
+    if (moving && now - player.frameTimer > player.frameInterval) {
+      player.frame = (player.frame + 1) % 2;
+      player.frameTimer = now;
+    } else if (!moving) {
+      player.frame = 0;
+    }
+
+    // КОЛЛИЗИИ
+    collisionMap.forEach(wall => {
+      if (isColliding(player, wall)) {
+        player.x = oldX;
+        player.y = oldY;
+      }
+    });
+
+    // ITEMS
+    if (!player.carryingItem) {
+      for (let item of items) {
+        if (!item.collected && isColliding(player, item)) {
+          item.collected = true;
+          player.carryingItem = true;
+          break;
+        }
+      }
+    }
+
+    if (player.carryingItem && isColliding(player, crabHole)) {
+      player.carryingItem = false;
+      player.score++;
+    }
+
+    // ГРАНИЦЫ
+    player.x = Math.max(0, Math.min(world.width - player.size, player.x));
+    player.y = Math.max(0, Math.min(world.height - player.size, player.y));
+
+    // КАМЕРА
+    camera.x = Math.max(0, Math.min(world.width - camera.width, player.x + player.size / 2 - camera.width / 2));
+    camera.y = Math.max(0, Math.min(world.height - camera.height, player.y + player.size / 2 - camera.height / 2));
+
+    // ДРУГИЕ ИГРОКИ (цвет команды)
+    Object.values(players).forEach(otherPlayer => {
+      if (otherPlayer.id !== myId) {
+        const screenX = otherPlayer.x - camera.x;
+        const screenY = otherPlayer.y - camera.y;
+        ctx.fillStyle = otherPlayer.team === 1 ? '#00f' : '#f00';
+        ctx.fillRect(screenX, screenY, player.size, player.size);
+      }
+    });
+
+    // ПЕСОК
+    const TILESIZE = 64;
+    for (let x = 0; x < canvas.width + TILESIZE; x += TILESIZE) {
+      for (let y = 0; y < canvas.height + TILESIZE; y += TILESIZE) {
+        ctx.drawImage(sandTexture, 0, 0, TILESIZE, TILESIZE, x, y, TILESIZE, TILESIZE);
+      }
+    }
+
+    // ВОДА
+    waterAreas.forEach(area => {
+      const screenX = area.x - camera.x;
+      const screenY = area.y - camera.y;
+      if (screenX + area.width > 0 && screenX < canvas.width &&
+          screenY + area.height > 0 && screenY < canvas.height) {
+        if (waterTexture.complete) {
+          const TILESIZE = 64;
+          for (let tx = 0; tx < area.width; tx += TILESIZE) {
+            for (let ty = 0; ty < area.height; ty += TILESIZE) {
+              ctx.drawImage(waterTexture, 0, 0, TILESIZE, TILESIZE,
+                screenX + tx, screenY + ty, TILESIZE, TILESIZE);
+            }
+          }
+        } else {
+          ctx.fillStyle = '#4169E1';
+          ctx.fillRect(screenX, screenY, area.width, area.height);
+        }
+      }
+    });
+
+    // СКАЛЫ
+    collisionMap.forEach(wall => {
+      const screenX = wall.x - camera.x;
+      const screenY = wall.y - camera.y;
+      if (screenX + wall.width > 0 && screenX < canvas.width &&
+          screenY + wall.height > 0 && screenY < canvas.height) {
+        if (rockTexture.complete) {
+          ctx.drawImage(rockTexture, screenX, screenY, wall.width, wall.height);
+        } else {
+          ctx.fillStyle = '#666';
+          ctx.fillRect(screenX, screenY, wall.width, wall.height);
+        }
+      }
+    });
+
+    // ITEMS
+    items.forEach(item => {
+      if (!item.collected) {
+        const screenX = item.x - camera.x;
+        const screenY = item.y - camera.y;
+        if (screenX + item.size > 0 && screenX < canvas.width &&
+            screenY + item.size > 0 && screenY < canvas.height) {
+          const img = itemTextures[item.group];
+          if (img.complete) {
+            ctx.drawImage(img, screenX, screenY, item.size, item.size);
+          } else {
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(screenX + item.size / 2, screenY + item.size / 2, item.size / 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+    });
+
+    // CRAB HOLE
+    const holeScreenX = crabHole.x - camera.x;
+    const holeScreenY = crabHole.y - camera.y;
+    if (holeScreenX + crabHole.size > 0 && holeScreenX < canvas.width &&
+        holeScreenY + crabHole.size > 0 && holeScreenY < canvas.height) {
+      if (holeTexture.complete && holeTexture.naturalWidth > 0) {
+        ctx.drawImage(holeTexture, holeScreenX, holeScreenY, crabHole.size, crabHole.size);
+      } else {
+        ctx.fillStyle = '#8B4513';
+        ctx.fillRect(holeScreenX, holeScreenY, crabHole.size, crabHole.size);
+      }
+    }
+
+    // СВОЙ PLAYER
+    const playerScreenX = player.x - camera.x;
+    const playerScreenY = player.y - camera.y;
+    const spriteArray = playerSprites[player.dir];
+    const img = spriteArray[player.frame];
+
+    if (img.complete) {
+      ctx.fillStyle = player.team === 1 ? 'rgba(0, 0, 255, 0.3)' : 'rgba(255, 0, 0, 0.3)';
+      ctx.fillRect(playerScreenX, playerScreenY + player.size - 6, player.size, 6);
+      ctx.drawImage(img, playerScreenX, playerScreenY, player.size, player.size);
+    } else {
+      ctx.fillStyle = player.team === 1 ? '#00f' : '#f00';
+      ctx.fillRect(playerScreenX, playerScreenY, player.size, player.size);
+    }
+
+    // UI: СЧЁТ И ВРЕМЯ
+    const elapsed = Math.floor((performance.now() - gameStartTime) / 1000);
+    const timeLeft = Math.max(0, 300 - elapsed);
+    const minutes = Math.floor(timeLeft / 60);
+    const seconds = timeLeft % 60;
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'white';
+    ctx.font = '24px Arial';
+    ctx.fillText(`Score: ${player.score}`, 20, 40);
+
+    ctx.textAlign = 'right';
+    ctx.font = '24px Arial';
+    ctx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, canvas.width - 20, 40);
+
+    // КОНЕЦ ИГРЫ ПО ВРЕМЕНИ
+    if (performance.now() - gameStartTime > MATCHTIME) {
+      gameState = 'gameOver';
+    }
+  } else if (gameState === 'menu') {
+    // Это уже не используется, т.к. nav меню в HTML
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.fillStyle = 'white';
     ctx.textAlign = 'center';
-    ctx.font = '48px Arial';
-    ctx.fillText('TONGAN BEACH', canvas.width / 2, canvas.height / 2 - 100);
     ctx.font = '24px Arial';
-    ctx.fillText('5v5 - 5 мин.', canvas.width / 2, canvas.height / 2 - 40);
-
-    ctx.fillStyle = keys.Enter ? '#FFD700' : 'white';
-    ctx.font = '32px Arial';
-    ctx.fillText('ENTER', canvas.width / 2, canvas.height / 2 + 50);
-
-    if (keys.Enter) {
-      const defaultName = 'Игрок ' + Math.floor(Math.random() * 1000);
-      const defaultRoom = 'public_room';
-
-      socket.emit('lobbyJoin', {
-        roomId: defaultRoom,
-        playerName: defaultName
-      });
-
-      delete keys.Enter;
-    }
-
-    requestAnimationFrame(loop);
-    return;
+    ctx.fillText('Открой меню выбора комнат', canvas.width / 2, canvas.height / 2);
   }
 
   // GAME OVER
@@ -297,200 +519,9 @@ function loop() {
     if (keys.Enter) {
       resetGame();
       gameState = 'menu';
+      waitingScreen.style.display = 'none';
+      roomsScreen.style.display = 'block';
     }
-
-    requestAnimationFrame(loop);
-    return;
-  }
-
-  // ДВИЖЕНИЕ + ВОДА
-  const oldX = player.x;
-  const oldY = player.y;
-  let speedMultiplier = 1;
-
-  waterAreas.forEach(area => {
-    if (player.x < area.x + area.width &&
-        player.x + player.size > area.x &&
-        player.y < area.y + area.height &&
-        player.y + player.size > area.y) {
-      speedMultiplier = 0.6;
-    }
-  });
-
-  const currentSpeed = player.speed * speedMultiplier;
-
-  if (keys.ArrowLeft || keys.KeyA)  player.x -= currentSpeed, player.dir = 'left';
-  if (keys.ArrowRight || keys.KeyD) player.x += currentSpeed, player.dir = 'right';
-  if (keys.ArrowUp || keys.KeyW)    player.y -= currentSpeed, player.dir = 'up';
-  if (keys.ArrowDown || keys.KeyS)  player.y += currentSpeed, player.dir = 'down';
-
-  const moving = keys.ArrowLeft || keys.KeyA || keys.ArrowRight || keys.KeyD ||
-                 keys.ArrowUp || keys.KeyW || keys.ArrowDown || keys.KeyS;
-
-  if (moving) {
-    socket.emit('move', { x: player.x, y: player.y, dir: player.dir });
-  }
-
-  const now = performance.now();
-  if (moving && now - player.frameTimer > player.frameInterval) {
-    player.frame = (player.frame + 1) % 2;
-    player.frameTimer = now;
-  } else if (!moving) {
-    player.frame = 0;
-  }
-
-  // КОЛЛИЗИИ
-  collisionMap.forEach(wall => {
-    if (isColliding(player, wall)) {
-      player.x = oldX;
-      player.y = oldY;
-    }
-  });
-
-  // ITEMS
-  if (!player.carryingItem) {
-    for (let item of items) {
-      if (!item.collected && isColliding(player, item)) {
-        item.collected = true;
-        player.carryingItem = true;
-        break;
-      }
-    }
-  }
-
-  if (player.carryingItem && isColliding(player, crabHole)) {
-    player.carryingItem = false;
-    player.score++;
-  }
-
-  // ГРАНИЦЫ
-  player.x = Math.max(0, Math.min(world.width - player.size, player.x));
-  player.y = Math.max(0, Math.min(world.height - player.size, player.y));
-
-  // КАМЕРА
-  camera.x = Math.max(0, Math.min(world.width - camera.width, player.x + player.size / 2 - camera.width / 2));
-  camera.y = Math.max(0, Math.min(world.height - camera.height, player.y + player.size / 2 - camera.height / 2));
-
-  // ДРУГИЕ ИГРОКИ (с цветом команды)
-  Object.values(players).forEach(otherPlayer => {
-    if (otherPlayer.id !== myId) {
-      const screenX = otherPlayer.x - camera.x;
-      const screenY = otherPlayer.y - camera.y;
-      ctx.fillStyle = otherPlayer.team === 1 ? '#00f' : '#f00';
-      ctx.fillRect(screenX, screenY, player.size, player.size);
-    }
-  });
-
-    // ПЕСОК
-  const TILESIZE = 64;
-  for (let x = 0; x < canvas.width + TILESIZE; x += TILESIZE) {
-    for (let y = 0; y < canvas.height + TILESIZE; y += TILESIZE) {
-      ctx.drawImage(sandTexture, 0, 0, TILESIZE, TILESIZE, x, y, TILESIZE, TILESIZE);
-    }
-  }
-
-  // ВОДА
-  waterAreas.forEach(area => {
-    const screenX = area.x - camera.x;
-    const screenY = area.y - camera.y;
-    if (screenX + area.width > 0 && screenX < canvas.width &&
-        screenY + area.height > 0 && screenY < canvas.height) {
-      if (waterTexture.complete) {
-        const TILESIZE = 64;
-        for (let tx = 0; tx < area.width; tx += TILESIZE) {
-          for (let ty = 0; ty < area.height; ty += TILESIZE) {
-            ctx.drawImage(waterTexture, 0, 0, TILESIZE, TILESIZE,
-              screenX + tx, screenY + ty, TILESIZE, TILESIZE);
-          }
-        }
-      } else {
-        ctx.fillStyle = '#4169E1';
-        ctx.fillRect(screenX, screenY, area.width, area.height);
-      }
-    }
-  });
-
-  // СКАЛЫ
-  collisionMap.forEach(wall => {
-    const screenX = wall.x - camera.x;
-    const screenY = wall.y - camera.y;
-    if (screenX + wall.width > 0 && screenX < canvas.width &&
-        screenY + wall.height > 0 && screenY < canvas.height) {
-      if (rockTexture.complete) {
-        ctx.drawImage(rockTexture, screenX, screenY, wall.width, wall.height);
-      } else {
-        ctx.fillStyle = '#666';
-        ctx.fillRect(screenX, screenY, wall.width, wall.height);
-      }
-    }
-  });
-
-  // ITEMS
-  items.forEach(item => {
-    if (!item.collected) {
-      const screenX = item.x - camera.x;
-      const screenY = item.y - camera.y;
-      if (screenX + item.size > 0 && screenX < canvas.width &&
-          screenY + item.size > 0 && screenY < canvas.height) {
-        const img = itemTextures[item.group];
-        if (img.complete) {
-          ctx.drawImage(img, screenX, screenY, item.size, item.size);
-        } else {
-          ctx.fillStyle = '#fff';
-          ctx.beginPath();
-          ctx.arc(screenX + item.size / 2, screenY + item.size / 2, item.size / 2, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    }
-  });
-
-  // CRAB HOLE
-  const holeScreenX = crabHole.x - camera.x;
-  const holeScreenY = crabHole.y - camera.y;
-  if (holeScreenX + crabHole.size > 0 && holeScreenX < canvas.width &&
-      holeScreenY + crabHole.size > 0 && holeScreenY < canvas.height) {
-    if (holeTexture.complete && holeTexture.naturalWidth > 0) {
-      ctx.drawImage(holeTexture, holeScreenX, holeScreenY, crabHole.size, crabHole.size);
-    } else {
-      ctx.fillStyle = '#8B4513';
-      ctx.fillRect(holeScreenX, holeScreenY, crabHole.size, crabHole.size);
-    }
-  }
-
-  // СВОЙ PLAYER
-  const playerScreenX = player.x - camera.x;
-  const playerScreenY = player.y - camera.y;
-  const spriteArray = playerSprites[player.dir];
-  const img = spriteArray[player.frame];
-
-  if (img.complete) {
-    ctx.fillStyle = player.team === 1 ? 'rgba(0, 0, 255, 0.3)' : 'rgba(255, 0, 0, 0.3)';
-    ctx.fillRect(playerScreenX, playerScreenY + player.size - 6, player.size, 6);
-    ctx.drawImage(img, playerScreenX, playerScreenY, player.size, player.size);
-  } else {
-    ctx.fillStyle = player.team === 1 ? '#00f' : '#f00';
-    ctx.fillRect(playerScreenX, playerScreenY, player.size, player.size);
-  }
-
-  // UI: СЧЁТ И ВРЕМЯ
-  const elapsed = Math.floor((performance.now() - gameStartTime) / 1000);
-  const timeLeft = Math.max(0, 300 - elapsed);
-  const minutes = Math.floor(timeLeft / 60);
-  const seconds = timeLeft % 60;
-
-  ctx.textAlign = 'left';
-  ctx.fillStyle = 'white';
-  ctx.font = '24px Arial';
-  ctx.fillText(`Score: ${player.score}`, 20, 40);
-
-  ctx.textAlign = 'right';
-  ctx.font = '24px Arial';
-  ctx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, canvas.width - 20, 40);
-
-  // КОНЕЦ ИГРЫ ПО ВРЕМЕНИ
-  if (performance.now() - gameStartTime > MATCHTIME) {
-    gameState = 'gameOver';
   }
 
   requestAnimationFrame(loop);
@@ -498,6 +529,6 @@ function loop() {
 
 // ЗАПУСК ИГРЫ
 loop();
-  </script>
+</script>
 </body>
 </html>
