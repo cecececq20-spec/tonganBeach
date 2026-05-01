@@ -24,6 +24,21 @@ socket.on('newPlayer', (player) => {
   players[player.id] = player; 
 });
 
+let myRoomId = null;          // куда ты зашёл
+let lobbyPlayers = [];        // массив для лобби
+
+socket.on('lobbyUpdate', (data) => {
+  myRoomId = data.roomId;
+  lobbyPlayers = data.players;
+  uiUpdateLobby();  // ниже сделаем эту функцию
+});
+
+socket.on('gameStart', (roomId) => {
+  gameState = 'playing';
+  gameStartTime = performance.now();
+  // музыку, карту и т.п. можно запустить/обновить здесь
+});
+    
 socket.on('playerMoved', (data) => { 
   if (players[data.id]) {
     players[data.id].x = data.x;
@@ -31,6 +46,41 @@ socket.on('playerMoved', (data) => {
     players[data.id].dir = data.dir;
   }
 });
+
+function uiUpdateLobby() {
+  if (gameState !== 'menu') return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = 'rgba(0, 50, 100, 0.8)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = 'white';
+  ctx.textAlign = 'center';
+  ctx.font = '24px Arial';
+
+  let y = 100;
+  ctx.fillText('ЛОББИ', canvas.width / 2, y);
+  y += 40;
+
+  lobbyPlayers.forEach(player => {
+    const color = player.ready ? '#0f0' : '#888';
+    ctx.fillStyle = color;
+    ctx.fillText(
+      `${player.name} (${player.team === 1 ? 'Синие' : 'Красные'})${player.ready ? ' ✅' : ''}`,
+      canvas.width / 2,
+      y
+    );
+    y += 30;
+  });
+
+  // кнопки / Enter для запуска — если хватает игроков
+  if (lobbyPlayers.length >= 2) {
+    ctx.fillStyle = keys.Enter ? '#FFD700' : 'white';
+    ctx.font = '32px Arial';
+    ctx.fillText('Enter — старт', canvas.width / 2, y + 30);
+  }
+}
 
 const bgMusic = new Audio('ost/The parade.mp3');
 bgMusic.loop = true;
@@ -126,6 +176,14 @@ const keys = {};
 window.addEventListener('keydown', e => { keys[e.code] = true; });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
+const team1Score = Object.values(players)
+  .filter(p => p.team === 1)
+  .reduce((sum, p) => sum + p.score, 0);
+
+const team2Score = Object.values(players)
+  .filter(p => p.team === 2)
+  .reduce((sum, p) => sum + p.score, 0);
+
 function isColliding(rect1, rect2) {
     const r2w = rect2.width || rect2.size;
     const r2h = rect2.height || rect2.size;
@@ -150,66 +208,130 @@ function resetGame() {
     items.forEach(item => item.collected = false);
 }
 
+// СВОЙ PLAYER
+const playerScreenX = player.x - camera.x;
+const playerScreenY = player.y - camera.y;
+const spriteArray = playerSprites[player.dir];
+const img = spriteArray[player.frame];
+
+if (img.complete) {
+  // если хочешь, можно рисовать тень/цвет под ногами
+  ctx.fillStyle = player.team === 1 ? 'rgba(0, 0, 255, 0.3)' : 'rgba(255, 0, 0, 0.3)';
+  ctx.fillRect(playerScreenX, playerScreenY + player.size - 6, player.size, 6);
+  ctx.drawImage(img, playerScreenX, playerScreenY, player.size, player.size);
+} else {
+  ctx.fillStyle = player.team === 1 ? '#00f' : '#f00';
+  ctx.fillRect(playerScreenX, playerScreenY, player.size, player.size);
+}
+
+let team1Score = 0;
+let team2Score = 0;
+
 function loop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  
+
   if (!allLoaded()) {
     ctx.fillStyle = 'white';
     ctx.textAlign = 'center';
     ctx.font = '24px Arial';
-    ctx.fillText('Загрузка текстур...', canvas.width/2, canvas.height/2);
+    ctx.fillText('Загрузка текстур...', canvas.width / 2, canvas.height / 2);
     requestAnimationFrame(loop);
     return;
   }
 
+  // === МЕНЮ / ЛОББИ ===
   if (gameState === 'menu') {
     ctx.fillStyle = 'rgba(0, 50, 100, 0.8)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
     ctx.fillStyle = 'white';
     ctx.textAlign = 'center';
     ctx.font = '48px Arial';
-    ctx.fillText('TONGAN BEACH', canvas.width/2, canvas.height/2 - 100);
+    ctx.fillText('TONGAN BEACH', canvas.width / 2, canvas.height / 2 - 100);
     ctx.font = '24px Arial';
-    ctx.fillText('5v5 - 5 мин.', canvas.width/2, canvas.height/2 - 40);
+    ctx.fillText('5v5 - 5 мин.', canvas.width / 2, canvas.height / 2 - 40);
+
     ctx.fillStyle = keys.Enter ? '#FFD700' : 'white';
     ctx.font = '32px Arial';
-    ctx.fillText('ENTER', canvas.width/2, canvas.height/2 + 50);
+    ctx.fillText('ENTER', canvas.width / 2, canvas.height / 2 + 50);
+
     if (keys.Enter) {
+      // 1) перейти из меню в игру
       gameState = 'playing';
       gameStartTime = performance.now();
       bgMusic.play().catch(console.log);
+
+      // 2) в лобби сервера
+      const defaultName = 'Игрок ' + Math.floor(Math.random() * 1000);
+      const defaultRoom = 'public_room';
+
+      socket.emit('lobbyJoin', {
+        roomId: defaultRoom,
+        playerName: defaultName
+      });
+
+      // снять Enter, чтобы не входить многократно
+      delete keys.Enter;
     }
+
     requestAnimationFrame(loop);
     return;
   }
 
+  // === GAME OVER (победа по командам) ===
   if (gameState === 'gameOver') {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
     ctx.fillStyle = 'white';
     ctx.textAlign = 'center';
     ctx.font = '48px Arial';
-    ctx.fillText('GAME OVER!', canvas.width/2, canvas.height/2);
+    ctx.fillText('GAME OVER!', canvas.width / 2, canvas.height / 2);
+
+    // соберём очки команд
+    team1Score = Object.values(players)
+      .filter(p => p.team === 1)
+      .reduce((sum, p) => sum + p.score, 0);
+
+    team2Score = Object.values(players)
+      .filter(p => p.team === 2)
+      .reduce((sum, p) => sum + p.score, 0);
+
+    const winText = team1Score > team2Score ? 'ПОБЕДА СИНИХ!' :
+                    team2Score > team1Score ? 'ПОБЕДА КРАСНЫХ!' :
+                                               'НИЧЬЯ!';
+
+    ctx.font = '28px Arial';
+    ctx.fillStyle = team1Score > team2Score ? '#00f' :
+                    team2Score > team1Score ? '#f00' : 'white';
+    ctx.fillText(winText, canvas.width / 2, canvas.height / 2 + 60);
+    ctx.fillText(`Счёт: ${team1Score} - ${team2Score}`, canvas.width / 2, canvas.height / 2 + 100);
+
     ctx.font = '32px Arial';
-    ctx.fillText(`Score: ${player.score}`, canvas.width/2, canvas.height/2 + 60);
-    ctx.fillText('ENTER', canvas.width/2, canvas.height/2 + 120);
+    ctx.fillText('ENTER', canvas.width / 2, canvas.height / 2 + 140);
     if (keys.Enter) {
       resetGame();
       gameState = 'menu';
     }
+
     requestAnimationFrame(loop);
     return;
   }
 
-  // ✅ ДВИЖЕНИЕ + ВОДА
-  const oldX = player.x, oldY = player.y;
+  // === ДВИЖЕНИЕ + ВОДА + ОБРАБОТКА ===
+  const oldX = player.x;
+  const oldY = player.y;
   let speedMultiplier = 1;
+
   waterAreas.forEach(area => {
-    if (player.x < area.x + area.width && player.x + player.size > area.x &&
-      player.y < area.y + area.height && player.y + player.size > area.y) {
+    if (player.x < area.x + area.width &&
+        player.x + player.size > area.x &&
+        player.y < area.y + area.height &&
+        player.y + player.size > area.y) {
       speedMultiplier = 0.6;
     }
   });
+
   const currentSpeed = player.speed * speedMultiplier;
 
   if (keys.ArrowLeft || keys.KeyA) player.x -= currentSpeed, player.dir = 'left';
@@ -217,14 +339,13 @@ function loop() {
   if (keys.ArrowUp || keys.KeyW) player.y -= currentSpeed, player.dir = 'up';
   if (keys.ArrowDown || keys.KeyS) player.y += currentSpeed, player.dir = 'down';
 
-  // ✅ SOCKET.IO — отправка на сервер
-  const moving = keys.ArrowLeft || keys.KeyA || keys.ArrowRight || keys.KeyD || 
-                keys.ArrowUp || keys.KeyW || keys.ArrowDown || keys.KeyS;
+  const moving = keys.ArrowLeft || keys.KeyA || keys.ArrowRight || keys.KeyD ||
+                 keys.ArrowUp || keys.KeyW || keys.ArrowDown || keys.KeyS;
+
   if (moving) {
-    socket.emit('move', {x: player.x, y: player.y, dir: player.dir});
+    socket.emit('move', { x: player.x, y: player.y, dir: player.dir });
   }
 
-  // ✅ АНИМАЦИЯ
   const now = performance.now();
   if (moving && now - player.frameTimer > player.frameInterval) {
     player.frame = (player.frame + 1) % 2;
@@ -264,12 +385,12 @@ function loop() {
   camera.x = Math.max(0, Math.min(world.width - camera.width, player.x + player.size / 2 - camera.width / 2));
   camera.y = Math.max(0, Math.min(world.height - camera.height, player.y + player.size / 2 - camera.height / 2));
 
-  // ✅ ДРУГИЕ ИГРОКИ (рисовать ДО своего)
+  // ДРУГИЕ ИГРОКИ (с цветом команды)
   Object.values(players).forEach(otherPlayer => {
     if (otherPlayer.id !== myId) {
       const screenX = otherPlayer.x - camera.x;
       const screenY = otherPlayer.y - camera.y;
-      ctx.fillStyle = otherPlayer.team === 1 ? '#00f' : '#f00';  // Синие/красные
+      ctx.fillStyle = otherPlayer.team === 1 ? '#00f' : '#f00';  // синие/красные
       ctx.fillRect(screenX, screenY, player.size, player.size);
     }
   });
@@ -286,13 +407,13 @@ function loop() {
   waterAreas.forEach(area => {
     const screenX = area.x - camera.x;
     const screenY = area.y - camera.y;
-    if (screenX + area.width > 0 && screenX < canvas.width && 
-      screenY + area.height > 0 && screenY < canvas.height) {
+    if (screenX + area.width > 0 && screenX < canvas.width &&
+        screenY + area.height > 0 && screenY < canvas.height) {
       if (waterTexture.complete) {
         const TILESIZE = 64;
         for (let tx = 0; tx < area.width; tx += TILESIZE) {
           for (let ty = 0; ty < area.height; ty += TILESIZE) {
-            ctx.drawImage(waterTexture, 0, 0, TILESIZE, TILESIZE, 
+            ctx.drawImage(waterTexture, 0, 0, TILESIZE, TILESIZE,
               screenX + tx, screenY + ty, TILESIZE, TILESIZE);
           }
         }
@@ -307,8 +428,8 @@ function loop() {
   collisionMap.forEach(wall => {
     const screenX = wall.x - camera.x;
     const screenY = wall.y - camera.y;
-    if (screenX + wall.width > 0 && screenX < canvas.width && 
-      screenY + wall.height > 0 && screenY < canvas.height) {
+    if (screenX + wall.width > 0 && screenX < canvas.width &&
+        screenY + wall.height > 0 && screenY < canvas.height) {
       if (rockTexture.complete) {
         ctx.drawImage(rockTexture, screenX, screenY, wall.width, wall.height);
       } else {
@@ -323,15 +444,15 @@ function loop() {
     if (!item.collected) {
       const screenX = item.x - camera.x;
       const screenY = item.y - camera.y;
-      if (screenX + item.size > 0 && screenX < canvas.width && 
-        screenY + item.size > 0 && screenY < canvas.height) {
+      if (screenX + item.size > 0 && screenX < canvas.width &&
+          screenY + item.size > 0 && screenY < canvas.height) {
         const img = itemTextures[item.group];
         if (img.complete) {
           ctx.drawImage(img, screenX, screenY, item.size, item.size);
         } else {
           ctx.fillStyle = '#fff';
           ctx.beginPath();
-          ctx.arc(screenX + item.size/2, screenY + item.size/2, item.size/2, 0, Math.PI * 2);
+          ctx.arc(screenX + item.size / 2, screenY + item.size / 2, item.size / 2, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -341,8 +462,8 @@ function loop() {
   // Crab hole
   const holeScreenX = crabHole.x - camera.x;
   const holeScreenY = crabHole.y - camera.y;
-  if (holeScreenX + crabHole.size > 0 && holeScreenX < canvas.width && 
-    holeScreenY + crabHole.size > 0 && holeScreenY < canvas.height) {
+  if (holeScreenX + crabHole.size > 0 && holeScreenX < canvas.width &&
+      holeScreenY + crabHole.size > 0 && holeScreenY < canvas.height) {
     if (holeTexture.complete && holeTexture.naturalWidth > 0) {
       ctx.drawImage(holeTexture, holeScreenX, holeScreenY, crabHole.size, crabHole.size);
     } else {
@@ -356,26 +477,35 @@ function loop() {
   const playerScreenY = player.y - camera.y;
   const spriteArray = playerSprites[player.dir];
   const img = spriteArray[player.frame];
+
   if (img.complete) {
+    // можно сделать тень под ногами
+    ctx.fillStyle = player.team === 1 ? 'rgba(0, 0, 255, 0.3)' : 'rgba(255, 0, 0, 0.3)';
+    ctx.fillRect(playerScreenX, playerScreenY + player.size - 6, player.size, 6);
     ctx.drawImage(img, playerScreenX, playerScreenY, player.size, player.size);
   } else {
-    ctx.fillStyle = '#00f';
+    ctx.fillStyle = player.team === 1 ? '#00f' : '#f00';
     ctx.fillRect(playerScreenX, playerScreenY, player.size, player.size);
   }
 
-  // UI
+  // UI: время и личный счёт
   const elapsed = Math.floor((performance.now() - gameStartTime) / 1000);
   const timeLeft = Math.max(0, 300 - elapsed);
   const minutes = Math.floor(timeLeft / 60);
   const seconds = timeLeft % 60;
+
   ctx.textAlign = 'left';
   ctx.fillStyle = 'white';
   ctx.font = '24px Arial';
   ctx.fillText(`Score: ${player.score}`, 20, 40);
+
   ctx.textAlign = 'right';
   ctx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, canvas.width - 20, 40);
 
-  if (performance.now() - gameStartTime > MATCHTIME) gameState = 'gameOver';
+  // проверка окончания матча
+  if (performance.now() - gameStartTime > MATCHTIME) {
+    gameState = 'gameOver';
+  }
 
   requestAnimationFrame(loop);
 }
