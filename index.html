@@ -1,3 +1,6 @@
+<!--decipher the Caesar cipher shift 1 "J'n ujsfe pg nbljoh b tfswfs"-->
+<!--"rdbqds bncd : 31337"-->
+
 <!DOCTYPE html>
 <html lang="ru"><head>
     <meta charset="utf-8">
@@ -96,6 +99,7 @@ function loadImage(src) {
     return img;
 }
 
+
 const playerSprites = {
     right: [loadImage('playerpozez/Pl_right1.png'), loadImage('playerpozez/Pl_right2.png')],
     left: [loadImage('playerpozez/PL_left1.png'), loadImage('playerpozez/PL_left2.png')],
@@ -123,6 +127,9 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 resize();
+
+let team1Score = 0;
+let team2Score = 0;
 
 const player = { x: 100, y: 100, size: 40, speed: 5, dir: 'down', frame: 0, frameTimer: 0, frameInterval: 150, carryingItem: false, score: 0 };
 
@@ -176,14 +183,6 @@ const keys = {};
 window.addEventListener('keydown', e => { keys[e.code] = true; });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
-const team1Score = Object.values(players)
-  .filter(p => p.team === 1)
-  .reduce((sum, p) => sum + p.score, 0);
-
-const team2Score = Object.values(players)
-  .filter(p => p.team === 2)
-  .reduce((sum, p) => sum + p.score, 0);
-
 function isColliding(rect1, rect2) {
     const r2w = rect2.width || rect2.size;
     const r2h = rect2.height || rect2.size;
@@ -223,9 +222,6 @@ if (img.complete) {
   ctx.fillStyle = player.team === 1 ? '#00f' : '#f00';
   ctx.fillRect(playerScreenX, playerScreenY, player.size, player.size);
 }
-
-let team1Score = 0;
-let team2Score = 0;
 
 function loop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
