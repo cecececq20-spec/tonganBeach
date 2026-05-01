@@ -1,51 +1,141 @@
-<!--decipher the Caesar cipher shift 1 "J'n ujsfe pg nbljoh b tfswfs"-->
-
-<!--"rdbqds bncd : 31337"-->
-
-
-
 <!DOCTYPE html>
-<html lang="ru"><head>
-    <meta charset="utf-8">
-    <title>Tongan Beach</title>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Tongan Beach</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 <body style="margin: 0; padding: 0; overflow: hidden; background: #87CEEB;">
-    <canvas id="theCanvas" style="display:block;width:100vw;height:100vh;"></canvas>
+  <canvas id="theCanvas" style="display:block;width:100vw;height:100vh;"></canvas>
 <script>
 const canvas = document.getElementById('theCanvas');
 const ctx = canvas.getContext('2d');
 
 const socket = io('https://tonganbeach.onrender.com');
-let players = {};
-let myId = null;
 
-socket.emit('join', {team: 1});
+let players = {};          // {id: {x, y, team, ...}}
+let myId = null;           // твой ид (из 'id' события)
+let myRoomId = null;       // roomId, где ты в лобби
+let lobbyPlayers = [];     // для лобби
+let gameState = 'menu';    // 'menu' / 'playing' / 'gameOver'
+let gameStartTime = 0;     // ms
+let team1Score = 0;
+let team2Score = 0;
 
-socket.on('currentPlayers', (serverPlayers) => { 
-  players = serverPlayers; 
+const MATCHTIME = 300000;  // 5 минут
+
+const bgMusic = new Audio('ost/The parade.mp3');
+bgMusic.loop = true;
+bgMusic.volume = 0.3;
+
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.code] = true; });
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+const world = { width: 2000, height: 2000 };
+const camera = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  camera.width = canvas.width;
+  camera.height = canvas.height;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function loadImage(src) {
+  const img = new Image();
+  img.src = src;
+  return img;
+}
+
+const sandTexture = loadImage('textures/sand_texture.png');
+const rockTexture = loadImage('textures/rock.png');
+const waterTexture = loadImage('textures/water_texture.png');
+const holeTexture = loadImage('textures/hole_texture.png');
+
+const playerSprites = {
+  right: [loadImage('playerpozez/Pl_right1.png'), loadImage('playerpozez/Pl_right2.png')],
+  left: [loadImage('playerpozez/PL_left1.png'), loadImage('playerpozez/PL_left2.png')],
+  up: [loadImage('playerpozez/Pl_up1.png'), loadImage('playerpozez/Pl_up2.png')],
+  down: [loadImage('playerpozez/PL_down1.png'), loadImage('playerpozez/PL_down2.png')]
+};
+
+const itemTextures = {};
+for (let i = 1; i <= 6; i++) {
+  itemTextures[i] = loadImage(`items/item_${i}.png`);
+}
+
+// СВОЙ PLAYER
+const player = {
+  x: 100, y: 100,
+  size: 40, speed: 5,
+  dir: 'down', frame: 0, frameTimer: 0, frameInterval: 150,
+  carryingItem: false, score: 0,
+  team: 1
+};
+
+// КАРТА
+const waterAreas = [
+  { x: 1400, y: 300, width: 400, height: 250 },
+  { x: 200, y: 1200, width: 300, height: 200 },
+  { x: 800, y: 1100, width: 250, height: 150 },
+  { x: 1600, y: 1400, width: 350, height: 200 }
+];
+
+const collisionMap = [
+  { x: 100, y: 150, width: 50, height: 50 },
+  { x: 300, y: 0, width: 50, height: 50 },
+  { x: 0, y: 450, width: 50, height: 50 },
+  { x: 500, y: 200, width: 50, height: 50 },
+  { x: 700, y: 100, width: 50, height: 50 },
+  { x: 200, y: 350, width: 30, height: 30 },
+  { x: 400, y: 600, width: 50, height: 50 },
+  { x: 900, y: 400, width: 55, height: 55 },
+  { x: 600, y: 800, width: 40, height: 40 },
+  { x: 1200, y: 200, width: 30, height: 30 }
+];
+
+const items = [
+  { x: 150, y: 150, size: 30, collected: false, group: 1 },
+  { x: 250, y: 80, size: 28, collected: false, group: 1 },
+  { x: 50, y: 220, size: 32, collected: false, group: 1 },
+  { x: 400, y: 120, size: 27, collected: false, group: 2 },
+  { x: 600, y: 90, size: 31, collected: false, group: 2 },
+  { x: 750, y: 180, size: 29, collected: false, group: 2 },
+  { x: 100, y: 400, size: 33, collected: false, group: 3 },
+  { x: 300, y: 380, size: 26, collected: false, group: 3 },
+  { x: 550, y: 350, size: 30, collected: false, group: 4 },
+  { x: 800, y: 300, size: 34, collected: false, group: 4 },
+  { x: 950, y: 420, size: 28, collected: false, group: 4 },
+  { x: 1100, y: 320, size: 31, collected: false, group: 5 },
+  { x: 1250, y: 450, size: 29, collected: false, group: 5 },
+  { x: 200, y: 650, size: 32, collected: false, group: 6 },
+  { x: 400, y: 800, size: 30, collected: false, group: 6 },
+  { x: 650, y: 700, size: 27, collected: false, group: 1 },
+  { x: 850, y: 680, size: 33, collected: false, group: 2 },
+  { x: 1050, y: 820, size: 29, collected: false, group: 4 },
+  { x: 1200, y: 500, size: 31, collected: false, group: 4 },
+  { x: 1300, y: 750, size: 28, collected: false, group: 6 }
+];
+
+const crabHole = { x: 400, y: 400, size: 100 };
+
+// SOCKET ON (клиент)
+socket.on('id', (id) => {
+  myId = id;
 });
 
-socket.on('newPlayer', (player) => { 
-  players[player.id] = player; 
+socket.on('currentPlayers', (serverPlayers) => {
+  players = serverPlayers;
 });
 
-let myRoomId = null;          // куда ты зашёл
-let lobbyPlayers = [];        // массив для лобби
-
-socket.on('lobbyUpdate', (data) => {
-  myRoomId = data.roomId;
-  lobbyPlayers = data.players;
-  uiUpdateLobby();  // ниже сделаем эту функцию
+socket.on('newPlayer', (newPlayer) => {
+  players[newPlayer.id] = newPlayer;
 });
 
-socket.on('gameStart', (roomId) => {
-  gameState = 'playing';
-  gameStartTime = performance.now();
-  // музыку, карту и т.п. можно запустить/обновить здесь
-});
-    
-socket.on('playerMoved', (data) => { 
+socket.on('playerMoved', (data) => {
   if (players[data.id]) {
     players[data.id].x = data.x;
     players[data.id].y = data.y;
@@ -53,6 +143,43 @@ socket.on('playerMoved', (data) => {
   }
 });
 
+socket.on('gameStart', (roomId) => {
+  gameState = 'playing';
+  gameStartTime = performance.now();
+});
+
+socket.on('lobbyUpdate', (data) => {
+  myRoomId = data.roomId;
+  lobbyPlayers = data.players;
+  uiUpdateLobby();
+});
+
+// ВСПОМОГАТЕЛЬНЫЕ
+function isColliding(rect1, rect2) {
+  const r2w = rect2.width || rect2.size;
+  const r2h = rect2.height || rect2.size;
+  return rect1.x < rect2.x + r2w &&
+         rect1.x + rect1.size > rect2.x &&
+         rect1.y < rect2.y + r2h &&
+         rect1.y + rect1.size > rect2.y;
+}
+
+function allLoaded() {
+  return sandTexture.complete && rockTexture.complete && waterTexture.complete &&
+         holeTexture.complete &&
+         Object.values(playerSprites).every(arr => arr.every(img => img.complete)) &&
+         Object.values(itemTextures).every(img => img.complete);
+}
+
+function resetGame() {
+  player.score = 0;
+  player.carryingItem = false;
+  player.x = 100;
+  player.y = 100;
+  items.forEach(item => item.collected = false);
+}
+
+// ЛОББИ‑МЕНЮ
 function uiUpdateLobby() {
   if (gameState !== 'menu') return;
 
@@ -65,7 +192,21 @@ function uiUpdateLobby() {
   ctx.textAlign = 'center';
   ctx.font = '24px Arial';
 
-  // В uiUpdateLobby, в конце
+  let y = 100;
+  ctx.fillText('ЛОББИ', canvas.width / 2, y);
+  y += 40;
+
+  lobbyPlayers.forEach(p => {
+    const color = p.ready ? '#0f0' : '#888';
+    ctx.fillStyle = color;
+    ctx.fillText(
+      `${p.name} (${p.team === 1 ? 'Синие' : 'Красные'})${p.ready ? ' ✅' : ''}`,
+      canvas.width / 2,
+      y
+    );
+    y += 30;
+  });
+
   if (lobbyPlayers.length >= 2) {
     ctx.fillStyle = keys.Enter ? '#FFD700' : 'white';
     ctx.font = '32px Arial';
@@ -76,168 +217,9 @@ function uiUpdateLobby() {
       delete keys.Enter;
     }
   }
-
-  let y = 100;
-  ctx.fillText('ЛОББИ', canvas.width / 2, y);
-  y += 40;
-
-  lobbyPlayers.forEach(player => {
-    const color = player.ready ? '#0f0' : '#888';
-    ctx.fillStyle = color;
-    ctx.fillText(
-      `${player.name} (${player.team === 1 ? 'Синие' : 'Красные'})${player.ready ? ' ✅' : ''}`,
-      canvas.width / 2,
-      y
-    );
-    y += 30;
-  });
-
-  // кнопки / Enter для запуска — если хватает игроков
-  if (lobbyPlayers.length >= 2) {
-    ctx.fillStyle = keys.Enter ? '#FFD700' : 'white';
-    ctx.font = '32px Arial';
-    ctx.fillText('Enter — старт', canvas.width / 2, y + 30);
-  }
 }
 
-const bgMusic = new Audio('ost/The parade.mp3');
-bgMusic.loop = true;
-bgMusic.volume = 0.3;
-
-let gameState = 'menu';
-let gameStartTime = 0;
-const MATCHTIME = 300000; // 5 мин
-
-function loadImage(src) {
-    const img = new Image();
-    img.src = src;
-    return img;
-}
-
-
-const playerSprites = {
-    right: [loadImage('playerpozez/Pl_right1.png'), loadImage('playerpozez/Pl_right2.png')],
-    left: [loadImage('playerpozez/PL_left1.png'), loadImage('playerpozez/PL_left2.png')],
-    up: [loadImage('playerpozez/Pl_up1.png'), loadImage('playerpozez/Pl_up2.png')],
-    down: [loadImage('playerpozez/PL_down1.png'), loadImage('playerpozez/PL_down2.png')]
-};
-
-const sandTexture = loadImage('textures/sand_texture.png');
-const rockTexture = loadImage('textures/rock.png');
-const waterTexture = loadImage('textures/water_texture.png');
-
-const itemTextures = {};
-for (let i = 1; i <= 6; i++) {
-    itemTextures[i] = loadImage(`items/item_${i}.png`);
-}
-
-const world = { width: 2000, height: 2000 };
-const camera = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
-
-function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    camera.width = canvas.width;
-    camera.height = canvas.height;
-}
-window.addEventListener('resize', resize);
-resize();
-
-let team1Score = 0;
-let team2Score = 0;
-
-const player = { x: 100, y: 100, size: 40, speed: 5, dir: 'down', frame: 0, frameTimer: 0, frameInterval: 150, carryingItem: false, score: 0 };
-
-const waterAreas = [
-    { x: 1400, y: 300, width: 400, height: 250 },  // Большое озеро справа
-    { x: 200, y: 1200, width: 300, height: 200 },  // Озеро снизу
-    { x: 800, y: 1100, width: 250, height: 150 },  // Маленькое озеро
-    { x: 1600, y: 1400, width: 350, height: 200 }  // Озеро в углу
-];
-
-const collisionMap = [
-    { x: 100, y: 150, width: 50, height: 50 },
-    { x: 300, y: 0, width: 50, height: 50 },
-    { x: 0, y: 450, width: 50, height: 50 },
-    { x: 500, y: 200, width: 50, height: 50 },
-    { x: 700, y: 100, width: 50, height: 50 },
-    { x: 200, y: 350, width: 30, height: 30 },
-    { x: 400, y: 600, width: 50, height: 50 },
-    { x: 900, y: 400, width: 55, height: 55 },
-    { x: 600, y: 800, width: 40, height: 40 },
-    { x: 1200, y: 200, width: 30, height: 30 }
-];
-
-const items = [
-    { x: 150, y: 150, size: 30, collected: false, group: 1 },
-    { x: 250, y: 80, size: 28, collected: false, group: 1 },
-    { x: 50, y: 220, size: 32, collected: false, group: 1 },
-    { x: 400, y: 120, size: 27, collected: false, group: 2 },
-    { x: 600, y: 90, size: 31, collected: false, group: 2 },
-    { x: 750, y: 180, size: 29, collected: false, group: 2 },
-    { x: 100, y: 400, size: 33, collected: false, group: 3 },
-    { x: 300, y: 380, size: 26, collected: false, group: 3 },
-    { x: 550, y: 350, size: 30, collected: false, group: 4 },
-    { x: 800, y: 300, size: 34, collected: false, group: 4 },
-    { x: 950, y: 420, size: 28, collected: false, group: 4 },
-    { x: 1100, y: 320, size: 31, collected: false, group: 5 },
-    { x: 1250, y: 450, size: 29, collected: false, group: 5 },
-    { x: 200, y: 650, size: 32, collected: false, group: 6 },
-    { x: 400, y: 800, size: 30, collected: false, group: 6 },
-    { x: 650, y: 700, size: 27, collected: false, group: 1 },
-    { x: 850, y: 680, size: 33, collected: false, group: 2 },
-    { x: 1050, y: 820, size: 29, collected: false, group: 4 },
-    { x: 1200, y: 500, size: 31, collected: false, group: 4 },
-    { x: 1300, y: 750, size: 28, collected: false, group: 6 }
-];
-
-const crabHole = { x: 400, y: 400, size: 100 };
-const holeTexture = loadImage('textures/hole_texture.png');
-
-const keys = {};
-window.addEventListener('keydown', e => { keys[e.code] = true; });
-window.addEventListener('keyup', e => { keys[e.code] = false; });
-
-function isColliding(rect1, rect2) {
-    const r2w = rect2.width || rect2.size;
-    const r2h = rect2.height || rect2.size;
-    return rect1.x < rect2.x + r2w &&
-           rect1.x + rect1.size > rect2.x &&
-           rect1.y < rect2.y + r2h &&
-           rect1.y + rect1.size > rect2.y;
-}
-
-function allLoaded() {
-    return sandTexture.complete && rockTexture.complete && waterTexture.complete && 
-           holeTexture.complete && 
-           Object.values(playerSprites).every(arr => arr.every(img => img.complete)) &&
-           Object.values(itemTextures).every(img => img.complete);
-}
-
-function resetGame() {
-    player.score = 0;
-    player.carryingItem = false;
-    player.x = 100;
-    player.y = 100;
-    items.forEach(item => item.collected = false);
-}
-
-// СВОЙ PLAYER
-const playerScreenX = player.x - camera.x;
-const playerScreenY = player.y - camera.y;
-const spriteArray = playerSprites[player.dir];
-const img = spriteArray[player.frame];
-
-if (img.complete) {
-  // если хочешь, можно рисовать тень/цвет под ногами
-  ctx.fillStyle = player.team === 1 ? 'rgba(0, 0, 255, 0.3)' : 'rgba(255, 0, 0, 0.3)';
-  ctx.fillRect(playerScreenX, playerScreenY + player.size - 6, player.size, 6);
-  ctx.drawImage(img, playerScreenX, playerScreenY, player.size, player.size);
-} else {
-  ctx.fillStyle = player.team === 1 ? '#00f' : '#f00';
-  ctx.fillRect(playerScreenX, playerScreenY, player.size, player.size);
-}
-
+// ОСНОВНОЙ ЦИКЛ
 function loop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -250,7 +232,7 @@ function loop() {
     return;
   }
 
-  // === МЕНЮ / ЛОББИ ===
+  // МЕНЮ / ЛОББИ
   if (gameState === 'menu') {
     ctx.fillStyle = 'rgba(0, 50, 100, 0.8)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -267,12 +249,6 @@ function loop() {
     ctx.fillText('ENTER', canvas.width / 2, canvas.height / 2 + 50);
 
     if (keys.Enter) {
-      // 1) перейти из меню в игру
-      gameState = 'playing';
-      gameStartTime = performance.now();
-      bgMusic.play().catch(console.log);
-
-      // 2) в лобби сервера
       const defaultName = 'Игрок ' + Math.floor(Math.random() * 1000);
       const defaultRoom = 'public_room';
 
@@ -281,7 +257,6 @@ function loop() {
         playerName: defaultName
       });
 
-      // снять Enter, чтобы не входить многократно
       delete keys.Enter;
     }
 
@@ -289,7 +264,7 @@ function loop() {
     return;
   }
 
-  // === GAME OVER (победа по командам) ===
+  // GAME OVER
   if (gameState === 'gameOver') {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -299,7 +274,6 @@ function loop() {
     ctx.font = '48px Arial';
     ctx.fillText('GAME OVER!', canvas.width / 2, canvas.height / 2);
 
-    // соберём очки команд
     team1Score = Object.values(players)
       .filter(p => p.team === 1)
       .reduce((sum, p) => sum + p.score, 0);
@@ -329,7 +303,7 @@ function loop() {
     return;
   }
 
-  // === ДВИЖЕНИЕ + ВОДА + ОБРАБОТКА ===
+  // ДВИЖЕНИЕ + ВОДА
   const oldX = player.x;
   const oldY = player.y;
   let speedMultiplier = 1;
@@ -345,10 +319,10 @@ function loop() {
 
   const currentSpeed = player.speed * speedMultiplier;
 
-  if (keys.ArrowLeft || keys.KeyA) player.x -= currentSpeed, player.dir = 'left';
+  if (keys.ArrowLeft || keys.KeyA)  player.x -= currentSpeed, player.dir = 'left';
   if (keys.ArrowRight || keys.KeyD) player.x += currentSpeed, player.dir = 'right';
-  if (keys.ArrowUp || keys.KeyW) player.y -= currentSpeed, player.dir = 'up';
-  if (keys.ArrowDown || keys.KeyS) player.y += currentSpeed, player.dir = 'down';
+  if (keys.ArrowUp || keys.KeyW)    player.y -= currentSpeed, player.dir = 'up';
+  if (keys.ArrowDown || keys.KeyS)  player.y += currentSpeed, player.dir = 'down';
 
   const moving = keys.ArrowLeft || keys.KeyA || keys.ArrowRight || keys.KeyD ||
                  keys.ArrowUp || keys.KeyW || keys.ArrowDown || keys.KeyS;
@@ -365,7 +339,7 @@ function loop() {
     player.frame = 0;
   }
 
-  // Коллизии
+  // КОЛЛИЗИИ
   collisionMap.forEach(wall => {
     if (isColliding(player, wall)) {
       player.x = oldX;
@@ -373,7 +347,7 @@ function loop() {
     }
   });
 
-  // Items логика
+  // ITEMS
   if (!player.carryingItem) {
     for (let item of items) {
       if (!item.collected && isColliding(player, item)) {
@@ -383,16 +357,17 @@ function loop() {
       }
     }
   }
+
   if (player.carryingItem && isColliding(player, crabHole)) {
     player.carryingItem = false;
     player.score++;
   }
 
-  // Границы
+  // ГРАНИЦЫ
   player.x = Math.max(0, Math.min(world.width - player.size, player.x));
   player.y = Math.max(0, Math.min(world.height - player.size, player.y));
 
-  // Камера
+  // КАМЕРА
   camera.x = Math.max(0, Math.min(world.width - camera.width, player.x + player.size / 2 - camera.width / 2));
   camera.y = Math.max(0, Math.min(world.height - camera.height, player.y + player.size / 2 - camera.height / 2));
 
@@ -401,12 +376,12 @@ function loop() {
     if (otherPlayer.id !== myId) {
       const screenX = otherPlayer.x - camera.x;
       const screenY = otherPlayer.y - camera.y;
-      ctx.fillStyle = otherPlayer.team === 1 ? '#00f' : '#f00';  // синие/красные
+      ctx.fillStyle = otherPlayer.team === 1 ? '#00f' : '#f00';
       ctx.fillRect(screenX, screenY, player.size, player.size);
     }
   });
 
-  // ПЕСОК
+    // ПЕСОК
   const TILESIZE = 64;
   for (let x = 0; x < canvas.width + TILESIZE; x += TILESIZE) {
     for (let y = 0; y < canvas.height + TILESIZE; y += TILESIZE) {
@@ -435,7 +410,7 @@ function loop() {
     }
   });
 
-  // Скалы
+  // СКАЛЫ
   collisionMap.forEach(wall => {
     const screenX = wall.x - camera.x;
     const screenY = wall.y - camera.y;
@@ -450,7 +425,7 @@ function loop() {
     }
   });
 
-  // Items
+  // ITEMS
   items.forEach(item => {
     if (!item.collected) {
       const screenX = item.x - camera.x;
@@ -470,7 +445,7 @@ function loop() {
     }
   });
 
-  // Crab hole
+  // CRAB HOLE
   const holeScreenX = crabHole.x - camera.x;
   const holeScreenY = crabHole.y - camera.y;
   if (holeScreenX + crabHole.size > 0 && holeScreenX < canvas.width &&
@@ -483,14 +458,13 @@ function loop() {
     }
   }
 
-  // СВОЙ PLAYER (после других)
+  // СВОЙ PLAYER
   const playerScreenX = player.x - camera.x;
   const playerScreenY = player.y - camera.y;
   const spriteArray = playerSprites[player.dir];
   const img = spriteArray[player.frame];
 
   if (img.complete) {
-    // можно сделать тень под ногами
     ctx.fillStyle = player.team === 1 ? 'rgba(0, 0, 255, 0.3)' : 'rgba(255, 0, 0, 0.3)';
     ctx.fillRect(playerScreenX, playerScreenY + player.size - 6, player.size, 6);
     ctx.drawImage(img, playerScreenX, playerScreenY, player.size, player.size);
@@ -499,7 +473,7 @@ function loop() {
     ctx.fillRect(playerScreenX, playerScreenY, player.size, player.size);
   }
 
-  // UI: время и личный счёт
+  // UI: СЧЁТ И ВРЕМЯ
   const elapsed = Math.floor((performance.now() - gameStartTime) / 1000);
   const timeLeft = Math.max(0, 300 - elapsed);
   const minutes = Math.floor(timeLeft / 60);
@@ -511,9 +485,10 @@ function loop() {
   ctx.fillText(`Score: ${player.score}`, 20, 40);
 
   ctx.textAlign = 'right';
+  ctx.font = '24px Arial';
   ctx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, canvas.width - 20, 40);
 
-  // проверка окончания матча
+  // КОНЕЦ ИГРЫ ПО ВРЕМЕНИ
   if (performance.now() - gameStartTime > MATCHTIME) {
     gameState = 'gameOver';
   }
@@ -521,9 +496,8 @@ function loop() {
   requestAnimationFrame(loop);
 }
 
+// ЗАПУСК ИГРЫ
 loop();
-</script>
-
+  </script>
 </body>
-
 </html>
