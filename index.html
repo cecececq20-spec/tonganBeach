@@ -60,6 +60,8 @@ let myId = null;
 let team1Score = 0;
 let team2Score = 0;
 
+let lobbyPlayers = [];
+
 const MATCHTIME = 300000;       // 5 минут
 
 // ================== СОБЫТИЯ СЕРВЕРА ==================
@@ -100,6 +102,12 @@ socket.on('gameStart', (roomId) => {
 
 socket.on('gameOver', () => {
   gameState = 'gameOver';
+});
+
+socket.on('lobbyUpdate', (data) => {
+  myRoomId = data.roomId;
+  lobbyPlayers = data.players;
+  console.log('lobbyUpdate received, lobbyPlayers:', lobbyPlayers);
 });
 
 socket.on('currentPlayers', (serverPlayers) => {
@@ -508,6 +516,45 @@ function loop() {
     ctx.fillText('ENTER', canvas.width / 2, canvas.height / 2 + 140);
     if (keys.Enter) {
       resetGame();
+  function uiUpdateLobby() {
+    if (gameState !== 'menu') return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = 'rgba(0, 50, 100, 0.8)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.font = '24px Arial';
+
+    let y = 100;
+    ctx.fillText('ЛОББИ', canvas.width / 2, y);
+    y += 40;
+
+    lobbyPlayers.forEach(p => {
+      const color = p.ready ? '#0f0' : '#888';
+      ctx.fillStyle = color;
+      ctx.fillText(
+        `${p.name} (${p.team === 1 ? 'Синие' : 'Красные'})${p.ready ? ' ✅' : ''}`,
+        canvas.width / 2,
+        y
+      );
+      y += 30;
+    });
+
+  if (lobbyPlayers.length >= 2) {
+    ctx.fillStyle = keys.Enter ? '#FFD700' : 'white';
+    ctx.font = '32px Arial';
+    ctx.fillText('Enter — старт', canvas.width / 2, y + 30);
+
+    if (keys.Enter) {
+      console.log('🔑 ENTER в лобби — отправляем startGame для', myRoomId);
+      socket.emit('startGame', myRoomId);
+      delete keys.Enter;
+    }
+  }
+}
       gameState = 'menu';
       waitingScreen.style.display = 'none';
       roomsScreen.style.display = 'block';
