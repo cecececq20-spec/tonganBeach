@@ -10,13 +10,13 @@ const io = new Server(server, {
   path: '/socket.io/'
 });
 
-// ✅ СТАТИКА (index.html + все текстуры)
+// ✅ СТАТИКА (index.html + текстуры)
 app.use(express.static(__dirname));
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// КОМНАТЫ
+// 5v5 КОМНАТЫ
 const rooms = {};  // {roomId: {players: {}, started: false}}
 
 io.on('connection', (socket) => {
@@ -38,9 +38,10 @@ io.on('connection', (socket) => {
 
     socket.join(roomId);
 
-    // команда 1 или 2
-    const teams = Object.values(rooms[roomId].players).map(p => p.team);
-    const nextTeam = teams.length > 0 && teams.every(t => t === 1) ? 2 : 1;
+    // 5v5: 5 синих, потом 5 красных
+    const blueCount = Object.values(rooms[roomId].players).filter(p => p.team === 1).length;
+    const redCount = Object.values(rooms[roomId].players).filter(p => p.team === 2).length;
+    const nextTeam = (blueCount < 5) ? 1 : (redCount < 5 ? 2 : 1);
 
     rooms[roomId].players[socket.id] = {
       id: socket.id,
@@ -59,12 +60,13 @@ io.on('connection', (socket) => {
     socket.emit('currentPlayers', Object.values(rooms[roomId].players));
 
     // 2) всем в комнате
+    const playerCount = Object.keys(rooms[roomId].players).length;
     io.to(roomId).emit('playerCount', {
       roomId,
-      count: Object.keys(rooms[roomId].players).length
+      count: playerCount
     });
 
-    // 3) обновление лобби (для uiUpdateLobby)
+    // 3) обновление лобби для uiUpdateLobby
     io.to(roomId).emit('lobbyUpdate', {
       roomId,
       players: Object.values(rooms[roomId].players),
@@ -72,17 +74,23 @@ io.on('connection', (socket) => {
     });
   });
 
-  // 3) СТАРТ МАТЧА (🔥 ЭТО ГЛАВНОЕ!)
+  // 3) СТАРТ 5v5 (10 игроков)
   socket.on('startGame', (roomId) => {
-    console.log(`🎮 startGame ${socket.id} → ${roomId}`);
-    console.log(`  players: ${Object.keys(rooms[roomId]?.players || {}).length}`);
+    console.log(`🎮 5v5 startGame ${socket.id} → ${roomId}`);
+    
+    const playerCount = Object.keys(rooms[roomId]?.players || {}).length;
+    console.log(`  игроков: ${playerCount}/10`);
 
-    if (rooms[roomId] && Object.keys(rooms[roomId].players).length >= 2) {
+    if (rooms[roomId] && playerCount >= 10) {
       rooms[roomId].started = true;
       io.to(roomId).emit('gameStart', roomId);
-      console.log(`✅ gameStart отправлен в ${roomId}`);
+      console.log(`✅ 5v5 gameStart отправлен в ${roomId}`);
     } else {
-      console.log(`❌ недостаточно игроков в ${roomId}`);
+      socket.emit('playerCount', {
+        roomId,
+        count: playerCount
+      });
+      console.log(`⏳ ждём 10 игроков (сейчас ${playerCount})`);
     }
   });
 
@@ -108,9 +116,10 @@ io.on('connection', (socket) => {
     for (let roomId in rooms) {
       if (rooms[roomId].players[socket.id]) {
         delete rooms[roomId].players[socket.id];
+        const playerCount = Object.keys(rooms[roomId].players).length;
         io.to(roomId).emit('playerCount', {
           roomId,
-          count: Object.keys(rooms[roomId].players).length
+          count: playerCount
         });
         io.to(roomId).emit('lobbyUpdate', {
           roomId,
@@ -126,6 +135,6 @@ io.on('connection', (socket) => {
 // PORT
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
-  console.log(`🌴 Tongan Beach: порт ${port}`);
+  console.log(`🌴 Tongan Beach 5v5: порт ${port}`);
   console.log(`🌐 https://tonganbeach.onrender.com`);
 });
